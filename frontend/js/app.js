@@ -116,7 +116,7 @@ const App = {
         document.querySelectorAll('.btn-view').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.view === viewName);
         });
-        this.updateJadeCanvas();
+        this.updateJadeImage();
     },
 
     async loadArtifacts() {
@@ -174,7 +174,7 @@ const App = {
             grid.appendChild(card);
 
             const canvas = card.querySelector('canvas');
-            JadeCanvas.drawJade(canvas, artifact.jade_type);
+            JadeImage.drawJade(canvas, artifact.jade_type);
         });
     },
 
@@ -211,7 +211,7 @@ const App = {
         document.getElementById('info-weight').textContent = 
             `${(artifact.weight||0).toFixed(1)} g`;
 
-        this.updateJadeCanvas();
+        this.updateJadeImage();
         
         try {
             await Promise.all([
@@ -223,7 +223,7 @@ const App = {
         }
     },
 
-    updateJadeCanvas() {
+    updateJadeImage() {
         const artifact = this.state.currentArtifact;
         if (!artifact) return;
 
@@ -231,16 +231,16 @@ const App = {
         const view = this.state.currentView;
 
         if (view === 'original') {
-            JadeCanvas.drawJade(canvas, artifact.jade_type);
+            JadeImage.drawJade(canvas, artifact.jade_type);
             document.getElementById('forgery-badge').classList.add('hidden');
         } else if (view === 'density') {
-            this.loadAndDrawDensityMap();
+            this.loadAndDrawPatinaDensity();
         } else if (view === 'diffusion') {
             this.drawDiffusionView();
         }
     },
 
-    async loadAndDrawDensityMap() {
+    async loadAndDrawPatinaDensity() {
         const artifact = this.state.currentArtifact;
         if (!artifact) return;
 
@@ -250,26 +250,26 @@ const App = {
             const canvas = document.getElementById('jade-canvas');
             
             if (data.density_map && data.density_map.length > 0) {
-                DensityMap.drawOverlay(canvas, artifact.jade_type, data.density_map, {
+                PatinaDensity.drawOverlay(canvas, artifact.jade_type, data.density_map, {
                     colorScheme: 'viridis',
                     contour: true
                 });
             } else {
-                JadeCanvas.drawJade(canvas, artifact.jade_type);
+                JadeImage.drawJade(canvas, artifact.jade_type);
             }
 
             this.updateForgeryBadge();
             
         } catch (e) {
             console.error('加载密度图失败:', e);
-            JadeCanvas.drawJade(canvas, artifact.jade_type);
+            JadeImage.drawJade(canvas, artifact.jade_type);
         }
     },
 
     drawDiffusionView() {
         const canvas = document.getElementById('jade-canvas');
         const artifact = this.state.currentArtifact;
-        JadeCanvas.drawJade(canvas, artifact.jade_type);
+        JadeImage.drawJade(canvas, artifact.jade_type);
         this.updateForgeryBadge();
     },
 
@@ -345,7 +345,7 @@ const App = {
                 forgeryValue.textContent = (result.forgery_probability * 100).toFixed(1) + '%';
                 
                 const canvas = document.getElementById('jade-canvas');
-                JadeCanvas.drawForgeryFrame(canvas, result.forgery_probability);
+                JadeImage.drawForgeryFrame(canvas, result.forgery_probability);
             }
 
         } catch (e) {

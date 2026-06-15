@@ -1,1 +1,3 @@
-default_app_config = 'jade_monitor.apps.JadeMonitorConfig'
+from .celery import app as celery_app
+
+__all__ = ('celery_app',)

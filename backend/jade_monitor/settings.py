@@ -3,6 +3,26 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+def _load_dotenv():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(BASE_DIR / '.env')
+    except ImportError:
+        env_path = BASE_DIR / '.env'
+        if env_path.exists():
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    key, _, value = line.partition('=')
+                    key = key.strip()
+                    value = value.strip()
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+
+_load_dotenv()
+
 SECRET_KEY = os.environ.get(
     'DJANGO_SECRET_KEY',
     'django-insecure-jade-monitor-dev-fallback-2024-!changeme!'
@@ -29,9 +49,13 @@ INSTALLED_APPS = [
     'corsheaders',
     'channels',
     'api',
-    'algorithms',
-    'alerts',
-    'simulator',
+    # 'algorithms',
+    # 'alerts',
+    # 'simulator',
+    'fiveg_receiver',
+    'diffusion_solver',
+    'anomaly_detector',
+    'alert_ws',
 ]
 
 MIDDLEWARE = [
@@ -77,9 +101,9 @@ DATABASES = {
 
 MONGODB_DATABASES = {
     'default': {
-        'name': 'jade_monitor',
-        'host': 'localhost',
-        'port': 27017,
+        'name': os.environ.get('MONGODB_NAME', 'jade_monitor'),
+        'host': os.environ.get('MONGODB_HOST', 'localhost'),
+        'port': int(os.environ.get('MONGODB_PORT', '27017')),
     }
 }
 
@@ -104,16 +128,41 @@ CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            'hosts': [('localhost', 6379)],
+            'hosts': [(os.environ.get('REDIS_HOST', 'localhost'), int(os.environ.get('REDIS_PORT', '6379')))],
         },
     },
 }
 
-CELERY_BROKER_URL = 'redis://localhost:6379/0'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
 CELERY_TIMEZONE = 'Asia/Shanghai'
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
 
-WECHAT_WEBHOOK_URL = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key-here'
+WECHAT_WEBHOOK_URL = os.environ.get(
+    'WECHAT_WEBHOOK_URL',
+    'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key-here'
+)
 
-DIFFUSION_ALERT_THRESHOLD_MM = 2.0
-ANOMALY_SCORE_THRESHOLD = 0.7
+DIFFUSION_ALERT_THRESHOLD_MM = float(os.environ.get('DIFFUSION_ALERT_THRESHOLD_MM', '2.0'))
+ANOMALY_SCORE_THRESHOLD = float(os.environ.get('ANOMALY_SCORE_THRESHOLD', '0.7'))
+
+FIVE_G_BAND = os.environ.get('5G_BAND', 'n78')
+FIVE_G_PEAK_THROUGHPUT_GBPS = float(os.environ.get('5G_PEAK_THROUGHPUT_GBPS', '1.0'))
+FIVE_G_SUSTAINED_THROUGHPUT_GBPS = float(os.environ.get('5G_SUSTAINED_THROUGHPUT_GBPS', '0.8'))
+FIVE_G_LATENCY_MS = int(os.environ.get('5G_LATENCY_MS', '10'))
+FIVE_G_PACKET_LOSS_RATE = float(os.environ.get('5G_PACKET_LOSS_RATE', '0.001'))
+
+ISOLATION_FOREST_N_ESTIMATORS = int(os.environ.get('ISOLATION_FOREST_N_ESTIMATORS', '50'))
+ISOLATION_FOREST_MAX_SAMPLES = int(os.environ.get('ISOLATION_FOREST_MAX_SAMPLES', '256'))
+ISOLATION_FOREST_CONTAMINATION = float(os.environ.get('ISOLATION_FOREST_CONTAMINATION', '0.1'))
+ISOLATION_FOREST_MAX_BUFFER = int(os.environ.get('ISOLATION_FOREST_MAX_BUFFER', '10000'))
+
+WEBSOCKET_PING_INTERVAL = int(os.environ.get('WEBSOCKET_PING_INTERVAL', '30'))
+WEBSOCKET_PONG_TIMEOUT = int(os.environ.get('WEBSOCKET_PONG_TIMEOUT', '10'))
+WEBSOCKET_MAX_PENDING_ALERTS = int(os.environ.get('WEBSOCKET_MAX_PENDING_ALERTS', '500'))
+WEBSOCKET_PENDING_TTL = int(os.environ.get('WEBSOCKET_PENDING_TTL', '3600'))
+
+SIMULATOR_ARTIFACT_COUNT = int(os.environ.get('SIMULATOR_ARTIFACT_COUNT', '200'))
+SIMULATOR_INTERVAL = int(os.environ.get('SIMULATOR_INTERVAL', '30'))

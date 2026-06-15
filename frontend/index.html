@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>古代玉器沁色演化监测与仿古作伪识别系统</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            <h1>🏺 古代玉器沁色演化监测与仿古作伪识别系统</h1>
+        </div>
+        <div class="header-right">
+            <span id="connection-status" class="status-indicator online">● 实时监测中</span>
+            <span id="current-time"></span>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <aside class="sidebar">
+            <div class="stats-panel">
+                <h3>📊 数据概览</h3>
+                <div class="stat-item">
+                    <span class="stat-label">玉器总数</span>
+                    <span class="stat-value" id="total-artifacts">200</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">红山文化</span>
+                    <span class="stat-value" id="hongshan-count">100</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">良渚文化</span>
+                    <span class="stat-value" id="liangzhu-count">100</span>
+                </div>
+                <div class="stat-item danger">
+                    <span class="stat-label">活跃告警</span>
+                    <span class="stat-value" id="active-alerts">0</span>
+                </div>
+                <div class="stat-item warning">
+                    <span class="stat-label">高风险玉器</span>
+                    <span class="stat-value" id="high-risk">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">在线设备</span>
+                    <span class="stat-value" id="devices-online">40</span>
+                </div>
+            </div>
+
+            <div class="filter-panel">
+                <h3>🔍 筛选条件</h3>
+                <div class="filter-group">
+                    <label>文化类型</label>
+                    <select id="culture-filter">
+                        <option value="">全部</option>
+                        <option value="红山文化">红山文化</option>
+                        <option value="良渚文化">良渚文化</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>搜索</label>
+                    <input type="text" id="search-input" placeholder="输入玉器编号或名称">
+                </div>
+                <div class="filter-group">
+                    <label>风险等级</label>
+                    <select id="risk-filter">
+                        <option value="">全部</option>
+                        <option value="high">高风险</option>
+                        <option value="medium">中风险</option>
+                        <option value="low">低风险</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="simulator-panel">
+                <h3>📡 5G模拟</h3>
+                <button id="btn-start-sim" class="btn btn-primary">启动模拟</button>
+                <button id="btn-stop-sim" class="btn btn-secondary">停止模拟</button>
+                <div id="sim-status" class="sim-status">未启动</div>
+            </div>
+        </aside>
+
+        <main class="content">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="list">玉器列表</button>
+                <button class="tab-btn" data-tab="detail">玉器详情</button>
+                <button class="tab-btn" data-tab="alerts">告警中心</button>
+                <button class="tab-btn" data-tab="spectrum">光谱分析</button>
+            </div>
+
+            <div class="tab-content" id="tab-list">
+                <div class="list-header">
+                    <h2>玉器列表</h2>
+                    <div class="pagination">
+                        <button id="btn-prev">上一页</button>
+                        <span id="page-info">第 1 / 10 页</span>
+                        <button id="btn-next">下一页</button>
+                    </div>
+                </div>
+                <div class="artifact-grid" id="artifact-grid">
+                </div>
+            </div>
+
+            <div class="tab-content hidden" id="tab-detail">
+                <div class="detail-container">
+                    <div class="detail-left">
+                        <div class="jade-visualization">
+                            <h3 id="detail-name">选择一件玉器查看详情</h3>
+                            <div class="canvas-container">
+                                <canvas id="jade-canvas" width="400" height="400"></canvas>
+                                <div id="forgery-badge" class="forgery-badge hidden">
+                                    <span class="forgery-prob">作伪概率: <span id="forgery-value">0%</span></span>
+                                </div>
+                            </div>
+                            <div class="view-controls">
+                                <button class="btn-view" data-view="original">原始图像</button>
+                                <button class="btn-view active" data-view="density">沁色密度图</button>
+                                <button class="btn-view" data-view="diffusion">扩散模拟</button>
+                            </div>
+                        </div>
+                        <div class="jade-info">
+                            <h3>基本信息</h3>
+                            <div class="info-grid">
+                                <div class="info-item"><span>玉器编号:</span><span id="info-id">-</span></div>
+                                <div class="info-item"><span>文化类型:</span><span id="info-culture">-</span></div>
+                                <div class="info-item"><span>玉器类型:</span><span id="info-type">-</span></div>
+                                <div class="info-item"><span>出土遗址:</span><span id="info-site">-</span></div>
+                                <div class="info-item"><span>出土年份:</span><span id="info-year">-</span></div>
+                                <div class="info-item"><span>尺寸:</span><span id="info-size">-</span></div>
+                                <div class="info-item"><span>重量:</span><span id="info-weight">-</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="detail-right">
+                        <div class="diffusion-panel">
+                            <h3>沁色扩散分析</h3>
+                            <div id="diffusion-chart"></div>
+                            <div class="diffusion-stats">
+                                <div class="stat-mini">
+                                    <span>Fe³+渗透深度</span>
+                                    <strong id="fe-depth">- mm</strong>
+                                </div>
+                                <div class="stat-mini">
+                                    <span>Mn²+渗透深度</span>
+                                    <strong id="mn-depth">- mm</strong>
+                                </div>
+                                <div class="stat-mini">
+                                    <span>最大渗透深度</span>
+                                    <strong id="max-depth">- mm</strong>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="anomaly-panel">
+                            <h3>作伪识别结果</h3>
+                            <div id="anomaly-chart"></div>
+                            <div class="anomaly-reasons" id="anomaly-reasons"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content hidden" id="tab-alerts">
+                <div class="alerts-header">
+                    <h2>告警中心</h2>
+                    <div class="alert-filters">
+                        <select id="alert-status-filter">
+                            <option value="">全部状态</option>
+                            <option value="active">未处理</option>
+                            <option value="acknowledged">已确认</option>
+                        </select>
+                        <select id="alert-type-filter">
+                            <option value="">全部类型</option>
+                            <option value="diffusion">沁色深度</option>
+                            <option value="anomaly">作伪识别</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="alerts-list" id="alerts-list">
+                </div>
+            </div>
+
+            <div class="tab-content hidden" id="tab-spectrum">
+                <div class="spectrum-container">
+                    <div class="spectrum-header">
+                        <h2>光谱分析</h2>
+                        <select id="spectrum-type">
+                            <option value="raman">拉曼光谱</option>
+                            <option value="xrf">X射线荧光光谱</option>
+                        </select>
+                    </div>
+                    <div id="spectrum-chart" class="spectrum-chart"></div>
+                    <div class="spectrum-info">
+                        <div class="info-item"><span>玉器编号:</span><span id="spec-artifact-id">-</span></div>
+                        <div class="info-item"><span>采集设备:</span><span id="spec-device">-</span></div>
+                        <div class="info-item"><span>采集时间:</span><span id="spec-time">-</span></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="alert-toast" class="alert-toast hidden">
+        <div class="toast-content">
+            <span class="toast-icon">⚠️</span>
+            <div class="toast-body">
+                <div class="toast-title" id="toast-title">新告警</div>
+                <div class="toast-message" id="toast-message">告警信息</div>
+            </div>
+            <button class="toast-close" onclick="hideAlertToast()">×</button>
+        </div>
+    </div>
+
+    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/canvas.js"></script>
+    <script src="js/density.js"></script>
+    <script src="js/spectrum.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

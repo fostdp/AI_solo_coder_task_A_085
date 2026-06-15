@@ -1,7 +1,9 @@
 from celery import shared_task
 from django.conf import settings
 from api.mongodb import get_collection
+from api.metrics import ANOMALY_DETECTED_TOTAL, ANOMALY_FORGERY_SCORE, CELERY_TASK_DURATION
 from anomaly_detector.models import AnomalyDetector
+import time
 
 
 _detector_instance = None
@@ -21,6 +23,7 @@ def get_detector():
 
 @shared_task
 def detect_anomaly(artifact_id):
+    t0 = time.time()
     from alert_ws.tasks import send_anomaly_alert
 
     xrf_collection = get_collection('xrf_spectrum')
@@ -52,5 +55,9 @@ def detect_anomaly(artifact_id):
             'anomaly_score': result['anomaly_score'],
         }
         send_anomaly_alert.delay(alert_data)
+
+    ANOMALY_DETECTED_TOTAL.labels(is_anomaly=str(result['is_anomaly'])).inc()
+    ANOMALY_FORGERY_SCORE.labels(artifact_id=artifact_id).set(result['forgery_probability'])
+    CELERY_TASK_DURATION.labels(task_name='detect_anomaly').observe(time.time() - t0)
 
     return result

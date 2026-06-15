@@ -330,19 +330,50 @@ class FiveGNetworkSimulator:
 
 class Receiver5GSimulator:
 
+    FORGED_SPECTRA_SIGNATURES = {
+        'accelerated_aging': {
+            'description': '加速老化仿古',
+            'raman_peak_shifts': [(520, 525, 0.8), (380, 385, 0.6)],
+            'xrf_enhancements': {'Fe': 3.0, 'Mn': 2.5, 'Cu': 4.0},
+            'signature_noise': 0.005,
+        },
+        'chemical_staining': {
+            'description': '化学染色仿古',
+            'raman_peak_shifts': [(1080, 1085, 1.2), (700, 710, 0.9)],
+            'xrf_enhancements': {'Fe': 2.0, 'Mn': 4.0, 'Pb': 5.0},
+            'signature_noise': 0.003,
+        },
+        'heat_treatment': {
+            'description': '高温处理仿古',
+            'raman_peak_shifts': [(200, 195, 0.7), (520, 515, 0.5)],
+            'xrf_enhancements': {'Fe': 1.5, 'Mn': 1.8, 'Si': 2.2},
+            'signature_noise': 0.008,
+        },
+    }
+
+    FORGERY_INJECTION_API = '/api/simulator/inject_forgery/'
+
     def __init__(
         self,
         band: str = 'n78',
-        enable_network_sim: bool = True
+        enable_network_sim: bool = True,
+        device_count: int = 40,
+        interval: int = 21600,
     ):
         self.is_running = False
         self.thread = None
-        self.interval = 30
+        self.interval = interval
         self.artifact_count = 200
-        self.raman_devices = [f"RAMAN{str(i).zfill(3)}" for i in range(1, 21)]
-        self.xrf_devices = [f"XRF{str(i).zfill(3)}" for i in range(1, 21)]
+
+        raman_count = device_count // 2
+        xrf_count = device_count - raman_count
+        self.raman_devices = [f"RAMAN{str(i).zfill(3)}" for i in range(1, raman_count + 1)]
+        self.xrf_devices = [f"XRF{str(i).zfill(3)}" for i in range(1, xrf_count + 1)]
 
         self.base_spectra_cache = {}
+
+        self._forgery_injections: Dict[str, Dict] = {}
+        self._forgery_lock = threading.Lock()
 
         self.enable_network_sim = enable_network_sim
         self.network_sim: Optional[FiveGNetworkSimulator] = None
@@ -354,15 +385,18 @@ class Receiver5GSimulator:
             'total': 0,
             'success': 0,
             'failed': 0,
-            'dropped': 0
+            'dropped': 0,
+            'forgery_injected': 0,
         }
 
-    def start(self, interval: int = 30):
+    def start(self, interval: int = None):
         if self.is_running:
             logger.warning("模拟器已在运行")
             return
 
-        self.interval = interval
+        if interval is not None:
+            self.interval = interval
+
         self.is_running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -372,8 +406,12 @@ class Receiver5GSimulator:
             self.network_sim.start()
 
         logger.info(
-            f"5G接收器模拟器已启动，上报间隔: {interval}秒，"
-            f"网络模拟: {'启用' if self.enable_network_sim else '禁用'}"
+            "5G接收器模拟器已启动，设备: %d台(拉曼%d+XRF%d)，上报间隔: %d秒(%.1f小时)，"
+            "网络模拟: %s",
+            len(self.raman_devices) + len(self.xrf_devices),
+            len(self.raman_devices), len(self.xrf_devices),
+            self.interval, self.interval / 3600.0,
+            '启用' if self.enable_network_sim else '禁用'
         )
 
     def stop(self):
@@ -383,9 +421,51 @@ class Receiver5GSimulator:
         if self.network_sim:
             self.network_sim.stop()
         logger.info(
-            f"5G接收器模拟器已停止，统计: {self._upload_stats}, "
-            f"网络: {self.network_sim.get_stats() if self.network_sim else 'N/A'}"
+            "5G接收器模拟器已停止，统计: %s，网络: %s",
+            self._upload_stats,
+            self.network_sim.get_stats() if self.network_sim else 'N/A'
         )
+
+    def inject_forgery(self, artifact_id: str, forgery_type: str = 'chemical_staining') -> bool:
+        if forgery_type not in self.FORGED_SPECTRA_SIGNATURES:
+            logger.error("未知仿古类型: %s，可选: %s", forgery_type, list(self.FORGED_SPECTRA_SIGNATURES.keys()))
+            return False
+
+        with self._forgery_lock:
+            self._forgery_injections[artifact_id] = {
+                'type': forgery_type,
+                'injected_at': datetime.now().isoformat(),
+                **self.FORGED_SPECTRA_SIGNATURES[forgery_type],
+            }
+            if artifact_id in self.base_spectra_cache:
+                del self.base_spectra_cache[artifact_id]
+                xrf_key = 'xrf_' + artifact_id
+                if xrf_key in self.base_spectra_cache:
+                    del self.base_spectra_cache[xrf_key]
+
+        logger.info(
+            "已注入仿古光谱: 玉器=%s, 类型=%s(%s)",
+            artifact_id, forgery_type,
+            self.FORGED_SPECTRA_SIGNATURES[forgery_type]['description']
+        )
+        return True
+
+    def remove_forgery(self, artifact_id: str) -> bool:
+        with self._forgery_lock:
+            removed = self._forgery_injections.pop(artifact_id, None)
+            if removed:
+                if artifact_id in self.base_spectra_cache:
+                    del self.base_spectra_cache[artifact_id]
+                xrf_key = 'xrf_' + artifact_id
+                if xrf_key in self.base_spectra_cache:
+                    del self.base_spectra_cache[xrf_key]
+                logger.info("已移除仿古注入: %s", artifact_id)
+                return True
+        return False
+
+    def get_forgery_injections(self) -> Dict:
+        with self._forgery_lock:
+            return dict(self._forgery_injections)
 
     def _run(self):
         while self.is_running:
@@ -521,12 +601,25 @@ class Receiver5GSimulator:
 
         intensity = self.base_spectra_cache[artifact_id].copy()
 
-        drift = np.random.normal(0, 0.01, num_points)
-        intensity += drift
+        with self._forgery_lock:
+            forgery = self._forgery_injections.get(artifact_id)
 
-        noise_level = 0.03
-        noise = np.random.normal(0, noise_level, num_points)
-        intensity += noise
+        if forgery:
+            for orig_center, forged_center, height_mult in forgery.get('raman_peak_shifts', []):
+                orig_idx = np.argmin(np.abs(wavelengths - orig_center))
+                forged_idx = np.argmin(np.abs(wavelengths - forged_center))
+                if orig_idx < num_points and forged_idx < num_points:
+                    peak_val = intensity[orig_idx] * height_mult
+                    self._add_peak(intensity, wavelengths, forged_center, peak_val, 25)
+            noise_level = forgery.get('signature_noise', 0.005)
+            intensity += np.random.normal(0, noise_level, num_points)
+            self._upload_stats['forgery_injected'] += 1
+        else:
+            drift = np.random.normal(0, 0.01, num_points)
+            intensity += drift
+            noise_level = 0.03
+            noise = np.random.normal(0, noise_level, num_points)
+            intensity += noise
 
         intensity = np.maximum(intensity, 0)
 
@@ -565,20 +658,39 @@ class Receiver5GSimulator:
 
         intensity = self.base_spectra_cache[cache_key].copy()
 
-        drift_factor = 1 + np.random.normal(0, 0.02)
-        intensity *= drift_factor
+        with self._forgery_lock:
+            forgery = self._forgery_injections.get(artifact_id)
 
-        noise = np.random.normal(0, 0.01, num_points)
-        intensity += noise
+        if forgery:
+            xrf_enhancements = forgery.get('xrf_enhancements', {})
+            element_peak_map = {
+                'Fe': 6.40, 'Mn': 5.90, 'Cu': 8.04,
+                'Pb': 10.55, 'Si': 1.74, 'Ca': 3.69,
+            }
+            for element, multiplier in xrf_enhancements.items():
+                peak_energy = element_peak_map.get(element)
+                if peak_energy is not None:
+                    peak_idx = np.argmin(np.abs(energies - peak_energy))
+                    half_w = max(3, int(0.06 / (energies[1] - energies[0])))
+                    lo = max(0, peak_idx - half_w)
+                    hi = min(num_points, peak_idx + half_w + 1)
+                    intensity[lo:hi] *= multiplier
+            noise_level = forgery.get('signature_noise', 0.003)
+            intensity += np.random.normal(0, noise_level, num_points)
+        else:
+            drift_factor = 1 + np.random.normal(0, 0.02)
+            intensity *= drift_factor
+            noise = np.random.normal(0, 0.01, num_points)
+            intensity += noise
+
+            is_suspect = hash(artifact_id) % 100 < 15
+            if is_suspect:
+                fe_peak_idx = np.argmin(np.abs(energies - 6.40))
+                intensity[fe_peak_idx-5:fe_peak_idx+5] *= 2.5
+                cu_peak_idx = np.argmin(np.abs(energies - 8.04))
+                intensity[cu_peak_idx-3:cu_peak_idx+3] *= 3.0
+
         intensity = np.maximum(intensity, 0)
-
-        is_suspect = hash(artifact_id) % 100 < 15
-        if is_suspect:
-            fe_peak_idx = np.argmin(np.abs(energies - 6.40))
-            intensity[fe_peak_idx-5:fe_peak_idx+5] *= 2.5
-
-            cu_peak_idx = np.argmin(np.abs(energies - 8.04))
-            intensity[cu_peak_idx-3:cu_peak_idx+3] *= 3.0
 
         return {
             'energies': energies.tolist(),
@@ -624,4 +736,16 @@ class Receiver5GSimulator:
         }
 
 
-simulator = Receiver5GSimulator()
+def _create_simulator():
+    try:
+        from django.conf import settings
+        device_count = getattr(settings, 'SIMULATOR_DEVICE_COUNT', 40)
+        interval = getattr(settings, 'SIMULATOR_INTERVAL', 21600)
+        band = getattr(settings, 'FIVE_G_BAND', 'n78')
+    except Exception:
+        device_count = 40
+        interval = 21600
+        band = 'n78'
+    return Receiver5GSimulator(band=band, device_count=device_count, interval=interval)
+
+simulator = _create_simulator()

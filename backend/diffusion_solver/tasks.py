@@ -1,8 +1,10 @@
 from celery import shared_task
 import numpy as np
 from datetime import datetime
+import time
 
 from api.mongodb import get_collection
+from api.metrics import DIFFUSION_SOLVED_TOTAL, DIFFUSION_DEPTH_MM, CELERY_TASK_DURATION
 from django.conf import settings
 from .models import DiffusionModel
 from .tensor import CTCalibratedTensorBuilder
@@ -44,6 +46,7 @@ def _build_diffusion_model(artifact, use_anisotropic=True):
 
 @shared_task
 def solve_diffusion(artifact_id, temperature=None, humidity=None, time_hours=None, use_anisotropic=True):
+    t0 = time.time()
     artifact_coll = get_collection('jade_artifacts')
     artifact = artifact_coll.find_one({'artifact_id': artifact_id})
     if not artifact:
@@ -81,9 +84,14 @@ def solve_diffusion(artifact_id, temperature=None, humidity=None, time_hours=Non
 
     tensor_info = model.get_tensor_info()
 
+    culture = artifact.get('culture', '红山文化')
+    from api.mongodb import get_era_key
+    era = get_era_key(culture)
+
     result = {
         'artifact_id': artifact_id,
         'timestamp': datetime.now(),
+        'era': era,
         'fe3_diffusion': fe_result,
         'mn2_diffusion': mn_result,
         'penetration_depth_fe_mm': float(penetration_depth_fe),
@@ -132,6 +140,11 @@ def solve_diffusion(artifact_id, temperature=None, humidity=None, time_hours=Non
         }
         from alert_ws.tasks import send_diffusion_alert
         send_diffusion_alert.delay(alert_data)
+
+    DIFFUSION_SOLVED_TOTAL.labels(ion_type='Fe3+', solver_mode=fe_result.get('solver_mode', 'unknown')).inc()
+    DIFFUSION_DEPTH_MM.labels(artifact_id=artifact_id, ion_type='Fe3+').set(penetration_depth_fe)
+    DIFFUSION_DEPTH_MM.labels(artifact_id=artifact_id, ion_type='Mn2+').set(penetration_depth_mn)
+    CELERY_TASK_DURATION.labels(task_name='solve_diffusion').observe(time.time() - t0)
 
     return result
 

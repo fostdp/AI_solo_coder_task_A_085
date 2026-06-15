@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+db.sqlite3
+*.egg-info/
+dist/
+build/
+.env
+.git
+.gitignore
+__pycache__/
+anomaly_output.txt
+venv/
+.venv/

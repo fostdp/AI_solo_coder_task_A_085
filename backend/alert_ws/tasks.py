@@ -2,6 +2,7 @@ from celery import shared_task
 from datetime import datetime
 
 from api.mongodb import get_collection
+from api.metrics import ALERT_SENT_TOTAL
 
 
 @shared_task
@@ -9,11 +10,12 @@ def send_diffusion_alert(alert_data):
     alert_coll = get_collection('alerts')
     alert_coll.insert_one(alert_data)
 
-    from alerts.wechat_alert import WeChatAlert
-    from alerts.websocket_alert import WebSocketAlert
+    from alert_ws.wechat import WeChatNotifier
+    from alert_ws.websocket_push import WebSocketPush
 
-    WeChatAlert().send_alert(alert_data)
-    WebSocketAlert().broadcast_alert(alert_data)
+    WeChatNotifier().send_alert(alert_data)
+    WebSocketPush.broadcast_alert(alert_data)
+    ALERT_SENT_TOTAL.labels(alert_type='diffusion', channel='all').inc()
 
 
 @shared_task
@@ -33,8 +35,9 @@ def send_anomaly_alert(alert_data):
     }
     alert_coll.insert_one(doc)
 
-    from alerts.wechat_alert import WeChatAlert
-    from alerts.websocket_alert import WebSocketAlert
+    from alert_ws.wechat import WeChatNotifier
+    from alert_ws.websocket_push import WebSocketPush
 
-    WeChatAlert().send_alert(doc)
-    WebSocketAlert().broadcast_alert(doc)
+    WeChatNotifier().send_alert(doc)
+    WebSocketPush.broadcast_alert(doc)
+    ALERT_SENT_TOTAL.labels(alert_type='anomaly', channel='all').inc()

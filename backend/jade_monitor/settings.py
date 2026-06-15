@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'channels',
+    'django_prometheus',
     'api',
     # 'algorithms',
     # 'alerts',
@@ -59,14 +60,17 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
 CORS_ORIGIN_ALLOW_ALL = True
@@ -165,4 +169,5 @@ WEBSOCKET_MAX_PENDING_ALERTS = int(os.environ.get('WEBSOCKET_MAX_PENDING_ALERTS'
 WEBSOCKET_PENDING_TTL = int(os.environ.get('WEBSOCKET_PENDING_TTL', '3600'))
 
 SIMULATOR_ARTIFACT_COUNT = int(os.environ.get('SIMULATOR_ARTIFACT_COUNT', '200'))
-SIMULATOR_INTERVAL = int(os.environ.get('SIMULATOR_INTERVAL', '30'))
+SIMULATOR_INTERVAL = int(os.environ.get('SIMULATOR_INTERVAL', '21600'))
+SIMULATOR_DEVICE_COUNT = int(os.environ.get('SIMULATOR_DEVICE_COUNT', '40'))

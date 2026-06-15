@@ -1,0 +1,333 @@
+version: '3.8'
+
+services:
+  mongodb-configsvr:
+    image: mongo:7.0
+    command: mongod --configsvr --replSet cfgRs --bind_ip_all --port 27019
+    volumes:
+      - mongodb_config_data:/data/db
+    networks:
+      - jade-net
+    healthcheck:
+      test: echo 'rs.status().ok' | mongosh --port 27019 --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  mongodb-shard01:
+    image: mongo:7.0
+    command: mongod --shardsvr --replSet shardRs01 --bind_ip_all --port 27018
+    volumes:
+      - mongodb_shard01_data:/data/db
+    networks:
+      - jade-net
+    healthcheck:
+      test: echo 'rs.status().ok' | mongosh --port 27018 --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  mongodb-shard02:
+    image: mongo:7.0
+    command: mongod --shardsvr --replSet shardRs02 --bind_ip_all --port 27018
+    volumes:
+      - mongodb_shard02_data:/data/db
+    networks:
+      - jade-net
+    healthcheck:
+      test: echo 'rs.status().ok' | mongosh --port 27018 --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  mongodb-mongos:
+    image: mongo:7.0
+    command: mongos --configdb cfgRs/mongodb-configsvr:27019 --bind_ip_all --port 27017
+    ports:
+      - "27017:27017"
+    networks:
+      - jade-net
+    depends_on:
+      mongodb-configsvr:
+        condition: service_healthy
+      mongodb-shard01:
+        condition: service_healthy
+      mongodb-shard02:
+        condition: service_healthy
+
+  mongodb-init:
+    image: mongo:7.0
+    networks:
+      - jade-net
+    depends_on:
+      - mongodb-mongos
+      - mongodb-configsvr
+      - mongodb-shard01
+      - mongodb-shard02
+    volumes:
+      - ./mongodb/init_shard.js:/docker-entrypoint-initdb.d/init_shard.js:ro
+    entrypoint: >
+      bash -c '
+        echo "Waiting for mongos..."
+        sleep 10
+
+        echo "Initializing config replica set..."
+        mongosh --host mongodb-configsvr --port 27019 --quiet --eval "
+          rs.initiate({_id: \"cfgRs\", configsvr: true, members: [{_id: 0, host: \"mongodb-configsvr:27019\"}]})
+        " || true
+
+        sleep 5
+
+        echo "Initializing shard01 replica set..."
+        mongosh --host mongodb-shard01 --port 27018 --quiet --eval "
+          rs.initiate({_id: \"shardRs01\", members: [{_id: 0, host: \"mongodb-shard01:27018\"}]})
+        " || true
+
+        echo "Initializing shard02 replica set..."
+        mongosh --host mongodb-shard02 --port 27018 --quiet --eval "
+          rs.initiate({_id: \"shardRs02\", members: [{_id: 0, host: \"mongodb-shard02:27018\"}]})
+        " || true
+
+        sleep 10
+
+        echo "Adding shards via mongos..."
+        mongosh --host mongodb-mongos --port 27017 --quiet --eval "
+          sh.addShard(\"shardRs01/mongodb-shard01:27018\")
+        " || true
+        mongosh --host mongodb-mongos --port 27017 --quiet --eval "
+          sh.addShard(\"shardRs02/mongodb-shard02:27018\")
+        " || true
+
+        sleep 5
+
+        echo "Enabling sharding on jade_monitor..."
+        mongosh --host mongodb-mongos --port 27017 --quiet --eval "
+          sh.enableSharding(\"jade_monitor\");
+          sh.shardCollection(\"jade_monitor.artifacts\", {\"era\": 1});
+          sh.shardCollection(\"jade_monitor.raman_spectrum\", {\"era\": 1});
+          sh.shardCollection(\"jade_monitor.xrf_spectrum\", {\"era\": 1});
+          sh.shardCollection(\"jade_monitor.diffusion_results\", {\"era\": 1});
+          sh.shardCollection(\"jade_monitor.alerts\", {\"era\": 1});
+        " || true
+
+        echo "MongoDB sharding initialization complete."
+      '
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - jade-net
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: redis-cli ping
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: web
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env.docker
+    environment:
+      - MONGODB_HOST=mongodb-mongos
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    networks:
+      - jade-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb-mongos:
+        condition: service_started
+    volumes:
+      - ./frontend:/app/frontend_served:ro
+    restart: unless-stopped
+
+  celery-diffusion:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery-worker
+    environment:
+      - CELERY_QUEUE=diffusion
+      - CELERY_CONCURRENCY=2
+      - MONGODB_HOST=mongodb-mongos
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./backend/.env.docker
+    networks:
+      - jade-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery-anomaly:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery-worker
+    environment:
+      - CELERY_QUEUE=anomaly
+      - CELERY_CONCURRENCY=2
+      - MONGODB_HOST=mongodb-mongos
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./backend/.env.docker
+    networks:
+      - jade-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery-alerts:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery-worker
+    environment:
+      - CELERY_QUEUE=alerts
+      - CELERY_CONCURRENCY=4
+      - MONGODB_HOST=mongodb-mongos
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./backend/.env.docker
+    networks:
+      - jade-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery-default:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery-worker
+    environment:
+      - CELERY_QUEUE=default,receiver
+      - CELERY_CONCURRENCY=4
+      - MONGODB_HOST=mongodb-mongos
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./backend/.env.docker
+    networks:
+      - jade-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery-beat
+    environment:
+      - MONGODB_HOST=mongodb-mongos
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./backend/.env.docker
+    networks:
+      - jade-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  simulator:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: simulator
+    environment:
+      - MONGODB_HOST=mongodb-mongos
+      - MONGODB_PORT=27017
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - SIMULATOR_INTERVAL=21600
+      - SIMULATOR_DEVICE_COUNT=40
+      - SIMULATOR_ARTIFACT_COUNT=200
+    env_file:
+      - ./backend/.env.docker
+    networks:
+      - jade-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - jade-net
+    depends_on:
+      - web
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - jade-net
+    depends_on:
+      - prometheus
+
+networks:
+  jade-net:
+    driver: bridge
+
+volumes:
+  mongodb_config_data:
+  mongodb_shard01_data:
+  mongodb_shard02_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
